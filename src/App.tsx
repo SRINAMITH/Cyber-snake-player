@@ -1,15 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipForward, SkipBack, Volume2, VolumeX, RefreshCw, Trophy } from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, Volume2, VolumeX, RefreshCw, Trophy, Heart } from 'lucide-react';
+import ReactPlayer from 'react-player';
 
-const GRID_SIZE = 20;
-const INITIAL_SNAKE = [{ x: 10, y: 10 }];
+const GRID_SIZE = 30;
+const INITIAL_SNAKE = [{ x: 15, y: 15 }];
 const INITIAL_DIR = { x: 0, y: -1 };
-const GAME_SPEED = 120;
+
+const DIFFICULTIES = {
+  BEGINNER: { name: 'Beginner', speed: 120, color: 'text-green-400', border: 'border-green-400', lives: 5, obstaclesCount: 10, wallWraps: true },
+  PRO: { name: 'Pro', speed: 80, color: 'text-fuchsia-400', border: 'border-fuchsia-400', lives: 3, obstaclesCount: 25, wallWraps: false },
+  NIGHTMARE: { name: 'Nightmare', speed: 50, color: 'text-red-500', border: 'border-red-500', lives: 1, obstaclesCount: 50, wallWraps: false },
+};
+type DifficultyKey = keyof typeof DIFFICULTIES;
 
 const TRACKS = [
-  { id: 1, title: "Cyberpunk City (AI Gen)", url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" },
-  { id: 2, title: "Neon Drive (AI Gen)", url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3" },
-  { id: 3, title: "Digital Horizon (AI Gen)", url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3" },
+  { id: 1, title: "EL CONTROL - Super slowed", url: "https://www.youtube.com/watch?v=yiE_sQFVkLM" },
+  { id: 2, title: "Cyberpunk City (AI Gen)", url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" },
+  { id: 3, title: "Neon Drive (AI Gen)", url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3" },
 ];
 
 export default function App() {
@@ -17,22 +24,30 @@ export default function App() {
   const [snake, setSnake] = useState(INITIAL_SNAKE);
   const [dir, setDir] = useState(INITIAL_DIR);
   const [food, setFood] = useState({ x: 5, y: 5 });
+  const [obstacles, setObstacles] = useState<{x: number, y: number}[]>([]);
+  const [lives, setLives] = useState(0);
   const [gameOver, setGameOver] = useState(false);
   const [score, setScore] = useState(0);
-  const [highScore, setHighScore] = useState(0);
+  const [highScore, setHighScore] = useState(() => {
+    const saved = localStorage.getItem('neonSnakeHighScore');
+    return saved ? parseInt(saved, 10) : 0;
+  });
   const [isGameStarted, setIsGameStarted] = useState(false);
+  const [difficulty, setDifficulty] = useState<DifficultyKey>('BEGINNER');
+  const [isShaking, setIsShaking] = useState(false);
   
   // Music Player State
   const [currentTrackIndex, setCurrentTrackIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(0.5);
   const [isMuted, setIsMuted] = useState(false);
-  const audioRef = useRef<HTMLAudioElement>(null);
 
   // Refs for game loop
   const dirRef = useRef(dir);
   const snakeRef = useRef(snake);
   const foodRef = useRef(food);
+  const obstaclesRef = useRef(obstacles);
+  const livesRef = useRef(lives);
   const gameOverRef = useRef(gameOver);
   const isGameStartedRef = useRef(isGameStarted);
 
@@ -40,24 +55,76 @@ export default function App() {
   useEffect(() => { dirRef.current = dir; }, [dir]);
   useEffect(() => { snakeRef.current = snake; }, [snake]);
   useEffect(() => { foodRef.current = food; }, [food]);
+  useEffect(() => { obstaclesRef.current = obstacles; }, [obstacles]);
+  useEffect(() => { livesRef.current = lives; }, [lives]);
   useEffect(() => { gameOverRef.current = gameOver; }, [gameOver]);
   useEffect(() => { isGameStartedRef.current = isGameStarted; }, [isGameStarted]);
+
+  useEffect(() => {
+    localStorage.setItem('neonSnakeHighScore', highScore.toString());
+  }, [highScore]);
+
+  const generateObstacles = (count: number) => {
+    const newObstacles: {x: number, y: number}[] = [];
+    while (newObstacles.length < count) {
+      const obs = {
+        x: Math.floor(Math.random() * GRID_SIZE),
+        y: Math.floor(Math.random() * GRID_SIZE)
+      };
+      // Avoid placing near the center (spawn point)
+      const isNearCenter = Math.abs(obs.x - INITIAL_SNAKE[0].x) < 4 && Math.abs(obs.y - INITIAL_SNAKE[0].y) < 4;
+      const isDuplicate = newObstacles.some(o => o.x === obs.x && o.y === obs.y);
+      
+      if (!isNearCenter && !isDuplicate) {
+        newObstacles.push(obs);
+      }
+    }
+    return newObstacles;
+  };
+
+  const generateFood = (currentSnake: {x: number, y: number}[], currentObstacles: {x: number, y: number}[]) => {
+    let newFood;
+    while (true) {
+      newFood = {
+        x: Math.floor(Math.random() * GRID_SIZE),
+        y: Math.floor(Math.random() * GRID_SIZE)
+      };
+      const onSnake = currentSnake.some(s => s.x === newFood.x && s.y === newFood.y);
+      const onObstacle = currentObstacles.some(o => o.x === newFood.x && o.y === newFood.y);
+      if (!onSnake && !onObstacle) {
+        break;
+      }
+    }
+    return newFood;
+  };
+
+  const startGame = () => {
+    const diff = DIFFICULTIES[difficulty];
+    const newObstacles = generateObstacles(diff.obstaclesCount);
+    setObstacles(newObstacles);
+    setLives(diff.lives);
+    setSnake(INITIAL_SNAKE);
+    setDir(INITIAL_DIR);
+    setScore(0);
+    setGameOver(false);
+    setFood(generateFood(INITIAL_SNAKE, newObstacles));
+    setIsGameStarted(true);
+  };
 
   // Handle Keyboard Input
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Prevent default scrolling for arrow keys
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
         e.preventDefault();
       }
 
       if (e.key === ' ' && !isGameStartedRef.current) {
-        setIsGameStarted(true);
+        startGame();
         return;
       }
 
       if (e.key === ' ' && gameOverRef.current) {
-        resetGame();
+        startGame();
         return;
       }
 
@@ -75,7 +142,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown, { passive: false });
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [difficulty]); // Re-bind if difficulty changes so startGame uses latest
 
   // Game Loop
   useEffect(() => {
@@ -85,24 +152,53 @@ export default function App() {
       const currentSnake = snakeRef.current;
       const currentDir = dirRef.current;
       const currentFood = foodRef.current;
+      const currentObstacles = obstaclesRef.current;
+      const currentLives = livesRef.current;
+      const currentDifficulty = DIFFICULTIES[difficulty];
 
-      const newHead = {
+      let newHead = {
         x: currentSnake[0].x + currentDir.x,
         y: currentSnake[0].y + currentDir.y,
       };
+
+      let collision = false;
 
       // Check wall collision
       if (
         newHead.x < 0 || newHead.x >= GRID_SIZE ||
         newHead.y < 0 || newHead.y >= GRID_SIZE
       ) {
-        handleGameOver();
-        return;
+        if (currentDifficulty.wallWraps) {
+          newHead.x = (newHead.x + GRID_SIZE) % GRID_SIZE;
+          newHead.y = (newHead.y + GRID_SIZE) % GRID_SIZE;
+        } else {
+          collision = true;
+        }
       }
 
       // Check self collision
-      if (currentSnake.some(segment => segment.x === newHead.x && segment.y === newHead.y)) {
-        handleGameOver();
+      if (!collision && currentSnake.some(segment => segment.x === newHead.x && segment.y === newHead.y)) {
+        collision = true;
+      }
+
+      // Check obstacle collision
+      if (!collision && currentObstacles.some(obs => obs.x === newHead.x && obs.y === newHead.y)) {
+        collision = true;
+      }
+
+      if (collision) {
+        setIsShaking(true);
+        setTimeout(() => setIsShaking(false), 400);
+
+        if (currentLives > 1) {
+          setLives(l => l - 1);
+          setSnake(INITIAL_SNAKE);
+          setDir(INITIAL_DIR);
+        } else {
+          setLives(0);
+          setGameOver(true);
+          setIsGameStarted(false);
+        }
         return;
       }
 
@@ -115,7 +211,7 @@ export default function App() {
           if (newScore > highScore) setHighScore(newScore);
           return newScore;
         });
-        setFood(generateFood(newSnake));
+        setFood(generateFood(newSnake, currentObstacles));
       } else {
         newSnake.pop();
       }
@@ -123,54 +219,9 @@ export default function App() {
       setSnake(newSnake);
     };
 
-    const intervalId = setInterval(moveSnake, GAME_SPEED);
+    const intervalId = setInterval(moveSnake, DIFFICULTIES[difficulty].speed);
     return () => clearInterval(intervalId);
-  }, [isGameStarted, gameOver, highScore]);
-
-  const handleGameOver = () => {
-    setGameOver(true);
-    setIsGameStarted(false);
-  };
-
-  const generateFood = (currentSnake: {x: number, y: number}[]) => {
-    let newFood;
-    while (true) {
-      newFood = {
-        x: Math.floor(Math.random() * GRID_SIZE),
-        y: Math.floor(Math.random() * GRID_SIZE)
-      };
-      if (!currentSnake.some(s => s.x === newFood.x && s.y === newFood.y)) {
-        break;
-      }
-    }
-    return newFood;
-  };
-
-  const resetGame = () => {
-    setSnake(INITIAL_SNAKE);
-    setDir(INITIAL_DIR);
-    setScore(0);
-    setGameOver(false);
-    setFood(generateFood(INITIAL_SNAKE));
-    setIsGameStarted(true);
-  };
-
-  // Music Player Effects
-  useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = isMuted ? 0 : volume;
-    }
-  }, [volume, isMuted]);
-
-  useEffect(() => {
-    if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.play().catch(e => console.error("Audio playback failed:", e));
-      } else {
-        audioRef.current.pause();
-      }
-    }
-  }, [currentTrackIndex, isPlaying]);
+  }, [isGameStarted, gameOver, highScore, difficulty]);
 
   const togglePlay = () => setIsPlaying(!isPlaying);
   
@@ -199,7 +250,7 @@ export default function App() {
         <p className="text-cyan-400/70 mt-2 text-sm tracking-widest uppercase">Cyberpunk Edition</p>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-8 items-center lg:items-start max-w-6xl w-full px-4 justify-center">
+      <div className={`flex flex-col lg:flex-row gap-8 items-center lg:items-start max-w-[1400px] w-full px-4 justify-center ${isShaking ? 'animate-shake' : ''}`}>
         
         {/* Left Panel: Score & Stats */}
         <div className="flex flex-row lg:flex-col gap-4 w-full lg:w-48 order-2 lg:order-1 justify-center">
@@ -219,6 +270,16 @@ export default function App() {
               {highScore.toString().padStart(4, '0')}
             </div>
           </div>
+
+          <div className="bg-neutral-900/80 border border-red-500/30 rounded-xl p-4 shadow-[0_0_15px_rgba(239,68,68,0.1)] backdrop-blur-sm flex-1">
+            <div className="flex items-center gap-2 mb-1">
+              <Heart className="w-4 h-4 text-red-400" />
+              <h2 className="text-red-400 text-xs uppercase tracking-widest opacity-80">Lives</h2>
+            </div>
+            <div className="text-2xl font-bold text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]">
+              {lives}
+            </div>
+          </div>
         </div>
 
         {/* Center Panel: Game Grid */}
@@ -227,8 +288,8 @@ export default function App() {
             className="grid bg-neutral-900/50 border-2 border-cyan-500/50 rounded-lg overflow-hidden shadow-[0_0_30px_rgba(0,243,255,0.2)]"
             style={{
               gridTemplateColumns: `repeat(${GRID_SIZE}, minmax(0, 1fr))`,
-              width: 'min(85vw, 500px)',
-              height: 'min(85vw, 500px)'
+              width: 'min(90vw, 600px)',
+              height: 'min(90vw, 600px)'
             }}
           >
             {Array.from({ length: GRID_SIZE * GRID_SIZE }).map((_, i) => {
@@ -237,6 +298,7 @@ export default function App() {
               const isSnakeHead = snake[0].x === x && snake[0].y === y;
               const isSnakeBody = snake.some((s, idx) => idx !== 0 && s.x === x && s.y === y);
               const isFood = food.x === x && food.y === y;
+              const isObstacle = obstacles.some(o => o.x === x && o.y === y);
 
               return (
                 <div
@@ -246,6 +308,7 @@ export default function App() {
                     ${isSnakeHead ? 'bg-green-400 shadow-[0_0_10px_#39ff14] z-10 rounded-sm' : ''}
                     ${isSnakeBody ? 'bg-green-500/80 rounded-sm scale-90' : ''}
                     ${isFood ? 'bg-fuchsia-500 shadow-[0_0_15px_#ff00ff] rounded-full scale-75 animate-pulse' : ''}
+                    ${isObstacle ? 'bg-red-500/80 shadow-[0_0_10px_rgba(239,68,68,0.6)] rounded-sm scale-90' : ''}
                   `}
                 />
               );
@@ -254,9 +317,30 @@ export default function App() {
 
           {/* Overlays */}
           {!isGameStarted && !gameOver && (
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center rounded-lg">
+            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center rounded-lg z-20">
+              <h2 className="text-2xl font-bold text-white mb-6 uppercase tracking-widest">Select Difficulty</h2>
+              <div className="flex gap-3 mb-8">
+                {(Object.keys(DIFFICULTIES) as DifficultyKey[]).map((key) => (
+                  <button
+                    key={key}
+                    onClick={() => setDifficulty(key)}
+                    className={`px-3 py-2 border rounded text-sm font-bold tracking-wider uppercase transition-all duration-300
+                      ${difficulty === key 
+                        ? `${DIFFICULTIES[key].border} ${DIFFICULTIES[key].color} bg-white/10 shadow-[0_0_15px_currentColor]` 
+                        : `border-neutral-600 text-neutral-500 hover:border-neutral-400 hover:text-neutral-300`
+                      }`}
+                  >
+                    {DIFFICULTIES[key].name}
+                  </button>
+                ))}
+              </div>
+              <div className="text-center mb-6 text-neutral-400 text-xs space-y-1">
+                <p>Lives: <span className="text-white">{DIFFICULTIES[difficulty].lives}</span></p>
+                <p>Obstacles: <span className="text-white">{DIFFICULTIES[difficulty].obstaclesCount}</span></p>
+                <p>Wall Collision: <span className="text-white">{DIFFICULTIES[difficulty].wallWraps ? 'Wraps Around' : 'Lethal'}</span></p>
+              </div>
               <button 
-                onClick={() => setIsGameStarted(true)}
+                onClick={startGame}
                 className="px-8 py-3 bg-cyan-500/20 border border-cyan-400 text-cyan-400 font-bold tracking-widest uppercase rounded hover:bg-cyan-500/40 hover:shadow-[0_0_20px_rgba(0,243,255,0.5)] transition-all duration-300"
               >
                 Start Game
@@ -267,15 +351,29 @@ export default function App() {
           )}
 
           {gameOver && (
-            <div className="absolute inset-0 bg-black/80 backdrop-blur-md flex flex-col items-center justify-center rounded-lg border border-red-500/50 shadow-[inset_0_0_50px_rgba(239,68,68,0.2)]">
+            <div className="absolute inset-0 bg-black/80 backdrop-blur-md flex flex-col items-center justify-center rounded-lg border border-red-500/50 shadow-[inset_0_0_50px_rgba(239,68,68,0.2)] z-20">
               <h2 className="text-4xl font-black text-red-500 mb-2 drop-shadow-[0_0_10px_rgba(239,68,68,0.8)] uppercase tracking-widest">System Failure</h2>
               <p className="text-white mb-6">Final Score: <span className="text-cyan-400 font-bold">{score}</span></p>
               <button 
-                onClick={resetGame}
+                onClick={startGame}
                 className="flex items-center gap-2 px-6 py-3 bg-fuchsia-500/20 border border-fuchsia-400 text-fuchsia-400 font-bold tracking-widest uppercase rounded hover:bg-fuchsia-500/40 hover:shadow-[0_0_20px_rgba(255,0,255,0.5)] transition-all duration-300"
               >
                 <RefreshCw className="w-5 h-5" />
                 Reboot
+              </button>
+              <button 
+                onClick={() => {
+                  setSnake(INITIAL_SNAKE);
+                  setDir(INITIAL_DIR);
+                  setScore(0);
+                  setGameOver(false);
+                  setObstacles([]);
+                  setLives(0);
+                  setIsGameStarted(false);
+                }}
+                className="mt-6 text-neutral-400 text-xs hover:text-white underline decoration-neutral-500 underline-offset-4 uppercase tracking-widest transition-colors"
+              >
+                Change Difficulty
               </button>
             </div>
           )}
@@ -346,11 +444,19 @@ export default function App() {
           </div>
 
           {/* Hidden Audio Element */}
-          <audio 
-            ref={audioRef}
-            src={TRACKS[currentTrackIndex].url}
+          <ReactPlayer 
+            url={TRACKS[currentTrackIndex].url}
+            playing={isPlaying}
+            volume={isMuted ? 0 : volume}
             onEnded={handleTrackEnd}
-            preload="auto"
+            width="0"
+            height="0"
+            style={{ display: 'none' }}
+            config={{
+              youtube: {
+                playerVars: { showinfo: 0, controls: 0 }
+              }
+            }}
           />
         </div>
 
